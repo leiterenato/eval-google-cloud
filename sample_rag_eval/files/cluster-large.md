@@ -1,3 +1,11 @@
+---
+reviewers:
+- davidopp
+- lavalamp
+title: Considerations for large clusters
+weight: 10
+---
+
 A cluster is a set of {{< glossary_tooltip text="nodes" term_id="node" >}} (physical
 or virtual machines) running Kubernetes agents, managed by the
 {{< glossary_tooltip text="control plane" term_id="control-plane" >}}.
@@ -47,3 +55,73 @@ to the control plane hosts that are also in zone _A_. If a single control-plane 
 endpoint failure zone _A_ goes offline, that means that all the control-plane traffic for
 nodes in zone _A_ is now being sent between zones. Running multiple control plane hosts in
 each zone makes that outcome less likely.
+
+### etcd storage
+
+To improve performance of large clusters, you can store Event objects in a separate
+dedicated etcd instance.
+
+When creating a cluster, you can (using custom tooling):
+
+* start and configure additional etcd instance
+* configure the {{< glossary_tooltip term_id="kube-apiserver" text="API server" >}} to use it for storing events
+
+See [Operating etcd clusters for Kubernetes](/docs/tasks/administer-cluster/configure-upgrade-etcd/) and
+[Set up a High Availability etcd cluster with kubeadm](/docs/setup/production-environment/tools/kubeadm/setup-ha-etcd-with-kubeadm/)
+for details on configuring and managing etcd for a large cluster.
+
+## Addon resources
+
+Kubernetes [resource limits](/docs/concepts/configuration/manage-resources-containers/)
+help to minimize the impact of memory leaks and other ways that pods and containers can
+impact on other components. These resource limits apply to
+{{< glossary_tooltip text="addon" term_id="addons" >}} resources just as they apply to application workloads.
+
+For example, you can set CPU and memory limits for a logging component:
+
+```yaml
+  ...
+  containers:
+  - name: fluentd-cloud-logging
+    image: fluent/fluentd-kubernetes-daemonset:v1
+    resources:
+      limits:
+        cpu: 100m
+        memory: 200Mi
+```
+
+Addons' default limits are typically based on data collected from experience running
+each addon on small or medium Kubernetes clusters. When running on large
+clusters, addons often consume more of some resources than their default limits.
+If a large cluster is deployed without adjusting these values, the addon(s)
+may continuously get killed because they keep hitting the memory limit.
+Alternatively, the addon may run but with poor performance due to CPU time
+slice restrictions.
+
+To avoid running into cluster addon resource issues, when creating a cluster with
+many nodes, consider the following:
+
+* Some addons scale vertically - there is one replica of the addon for the cluster
+  or serving a whole failure zone. For these addons, increase requests and limits
+  as you scale out your cluster.
+* Many addons scale horizontally - you add capacity by running more pods - but with
+  a very large cluster you may also need to raise CPU or memory limits slightly.
+  The VerticalPodAutoscaler can run in _recommender_ mode to provide suggested
+  figures for requests and limits.
+* Some addons run as one copy per node, controlled by a {{< glossary_tooltip text="DaemonSet"
+  term_id="daemonset" >}}: for example, a node-level log aggregator. Similar to
+  the case with horizontally-scaled addons, you may also need to raise CPU or memory
+  limits slightly.
+
+## {{% heading "whatsnext" %}}
+
+* `VerticalPodAutoscaler` is a custom resource that you can deploy into your cluster
+to help you manage resource requests and limits for pods.  
+Learn more about [Vertical Pod Autoscaler](https://github.com/kubernetes/autoscaler/tree/master/vertical-pod-autoscaler#readme) 
+and how you can use it to scale cluster
+components, including cluster-critical addons.
+
+* Read about [cluster autoscaling](/docs/concepts/cluster-administration/cluster-autoscaling/)
+
+* The [addon resizer](https://github.com/kubernetes/autoscaler/tree/master/addon-resizer#readme)
+helps you in resizing the addons automatically as your cluster's scale changes.
